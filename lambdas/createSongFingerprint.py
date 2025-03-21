@@ -3,7 +3,6 @@ import json
 import tempfile
 import subprocess
 import numpy as np
-import librosa
 import soundfile as sf
 import yt_dlp
 from numpy import fft, array, maximum, log, hanning, abs
@@ -643,8 +642,6 @@ def lambda_handler(event, context):
             info = ydl.extract_info(youtube_url, download=False)
             video_id = info.get('id', video_id)
         
-        # Now download using ffmpeg with the time limit
-        temp_audio_file = os.path.join(temp_dir, f"{video_id}_original.wav")
 
         ydl_opts = {
             'format': 'worstaudio/worst',
@@ -678,14 +675,27 @@ def lambda_handler(event, context):
         
         print(f"Downloaded file: {downloaded_file}")
         
-        print("Loading with librosa and downsampling...")
-        y, _ = librosa.load(downloaded_file, sr=16000, mono=True)
+        print("Loading with sf and downsampling...")
+        data, samplerate = sf.read(downloaded_file)
+
+        # Convert to mono if stereo
+        if len(data.shape) > 1 and data.shape[1] > 1:
+            y = data.mean(axis=1)
+        else:
+            y = data
+
+        # Resample if needed - using a simple method since we're in Lambda
+        if samplerate != 16000:
+            # Calculate ratio for resampling
+            ratio = 16000 / samplerate
+            output_size = int(len(y) * ratio)
+
+            # Use numpy for basic resampling
+            indices = np.linspace(0, len(y) - 1, output_size)
+            indices = indices.astype(np.int32)
+            y = y[indices]
         
-        output_file = os.path.join(temp_dir, f"{video_id}_fingerprint.wav")
-
-        print(create_fingerprint(y))
-
-        sf.write(output_file, y, 16000, subtype='PCM_16')
+        unique_fingerprint = create_fingerprint(y).encode_to_json()
         
         if os.path.exists(downloaded_file):
             os.remove(downloaded_file)
@@ -695,7 +705,7 @@ def lambda_handler(event, context):
             'body': json.dumps({
                 'message': 'Audio processed successfully',
                 'video_id': video_id,
-                'output_file': output_file,
+                'fingerprint': unique_fingerprint,
                 'duration': len(y) / 16000
             })
         }

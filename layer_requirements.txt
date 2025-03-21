@@ -1,0 +1,4 @@
+soundfile
+yt-dlp
+cffi
+pycparser
